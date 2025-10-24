@@ -1,0 +1,11 @@
+# Archivos temporales de Julia
+*.jl.*
+!src/*.jl
+!examples/*.jl
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
+
+# Salida de pruebas
+test/
