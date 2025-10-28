@@ -16,7 +16,7 @@ dest = joinpath(maxima_dir, "qinf.mac")
 
 println("📥 Descargando qinf.mac desde GitHub...")
 try
-    Downloads.download(url, dest)
+    Downloads.download(url, dest)  
     println("✅ qinf.mac instalado en: ", dest)
     println("\n📌 Ahora puedes usarlo en Maxima con: load(\"qinf\");")
 catch e
