@@ -1,7 +1,7 @@
 name = "MaximaMacro"
 uuid = "2c6696bd-b88e-47da-b212-d636dca8b09"
 authors = ["Miguel Ángel Rubio de Diego <imardiego@gmail.com>"]
-version = "0.1.0"
+version = "1.0.0"
 
 [compat]
 julia = "1.6"
