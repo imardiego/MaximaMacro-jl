@@ -7,7 +7,7 @@ version = "2.0.0"
 julia = "1.6"
 
 [deps]
-Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"  # generado por Pkg.Types.project_uuid("Dates")
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"  # obtenido por Base.identify_package("Dates")
 
 [compat]
 julia = "1.6"
