@@ -1,13 +1,13 @@
 name = "MaximaMacro"
-uuid = "2c6696bd-b88e-47da-b212-d636dca8b09"
+uuid = "94002945-a687-49bf-ad87-71bdff4e58e6" # generado por Pkg.generate
 authors = ["Miguel Ángel Rubio de Diego <imardiego@gmail.com>"]
 version = "2.0.0"
 
 [compat]
 julia = "1.6"
 
-[extras]
-Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+[deps]
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"  # generado por Pkg.Types.project_uuid("Dates")
 
-[targets]
-test = ["Test"]
+[compat]
+julia = "1.6"
