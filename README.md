@@ -17,7 +17,6 @@ https://github.com/jlapeyre/qinf
 - ✅ **Gráficos en Jupyter**: los gráficos aparecen **en su posición correcta** dentro de la secuencia de comandos.
 - ✅ **Salida limpia**: formato `(%i1) comando;` → `(%o1) resultado`.
 - ✅ **Opción de créditos reales** de Maxima (encabezado oficial).
-- ✅ **Guardado opcional** de toda la salida en un fichero de texto.
 - ✅ **Compatibilidad con `qinf`**: paquete de aritmética cualitativa (infinitos, etc.).
 
 ## 📥 Instalación
