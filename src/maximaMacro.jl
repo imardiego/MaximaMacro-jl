@@ -1,191 +1,379 @@
+# ------------------------------------------------------------
+# Módulo MaximaMacro.jl
+# Interfaz avanzada entre Julia y Maxima para entornos como Jupyter
+# Permite ejecutar comandos de Maxima con sesión persistente,
+# salida limpia, gráficos integrados y opciones de exportación.
+# ------------------------------------------------------------
+
 module MaximaMacro
 
-export @maxima, @maxima_cell, @maxima_session, maxima_eval, maxima_eval_float
+# Dependencias del módulo estándar de Julia
+using Base: tempname      # Genera nombres de archivos temporales únicos
+using Dates               # Para marcar fecha/hora en los nombres de gráficos
+import Base.display       # Permitir mostrar gráficos en Jupyter
 
-# Variables de entorno para GCL (según Camm Maguire, GCL developer)
-# Fuente: https://lists.gnu.org/archive/html/gcl-devel/2017-09/msg00000.html
-const _GCL_ENV = Dict(
-    "GCL_MEM_MULTIPLE" => "0.3",     # Usa solo el 30% de la RAM física
-    "GCL_GC_PAGE_THRESH" => "0.2",   # Inicia GC más temprano
-    "GCL_GC_ALLOC_MIN" => "0.01",    # Mínima asignación entre GCs
-    "GCL_GC_PAGE_MAX" => "0.5"       # Fuerza GC antes de llegar al 50% del heap
-)
+# Exportar las funciones/macro que el usuario podrá usar
+export @maxima_cell_session, @maxima, maxima_eval
 
+# ------------------------------------------------------------
+# Macro simple: @maxima
+# Ejecuta un solo comando de Maxima y muestra la salida cruda.
+# Útil para pruebas rápidas.
+# ------------------------------------------------------------
+macro maxima(expr)
+    # Convertir la expresión a cadena y escapar comillas
+    cmd = replace(string(expr), "\"" => "\\\"")
+    # Ejecutar Maxima en modo muy silencioso y mostrar resultado
+    print(read(`maxima --very-quiet --batch-string="$cmd;"`, String))
+end
 
-"""
-    maxima_eval(cmd::String)
-
-Ejecuta un comando de Maxima y devuelve el resultado como `String`.
-
-# Ejemplo
-
-maxima_eval("diff(x^2, x)")  # → "2*x"
-maxima_eval("x:3; x^2+1")  # → "9"
-
-"""
-
-
-function maxima_eval(cmd::String)
-    cmd = strip(cmd)
-    if !endswith(cmd, ";")
-        cmd *= ";"
+# ------------------------------------------------------------
+# Función: maxima_eval
+# Evalúa un único comando de Maxima y devuelve solo el resultado (como cadena).
+# Útil para uso programático (no desde la macro principal).
+# ------------------------------------------------------------
+function maxima_eval(cmd::String)::String
+    stripped = strip(cmd)
+    # Asegurar que el comando termine en ; o $
+    if !endswith(stripped, ";") && !endswith(stripped, "\$")
+        cmd = cmd * ";"
     end
-        cmd *= "\n" # Evita "Premature termination" en GCL
-    safe_cmd = replace(cmd, "\"" => "\\\"")
-    env = copy(ENV)
-    merge!(env, _GCL_ENV)
-    raw_output = read(setenv(`maxima --very-quiet --batch-string="$safe_cmd;"`, env), String)
-    
-    # ✅ Eliminar caracteres no imprimibles (nulos, controles)
-    clean_output = filter(c -> c >= ' ' && c <= '~' || c == '\n' || c == '\r', raw_output)
-    
-    lines = [strip(l) for l in split(clean_output, '\n') if !isempty(strip(l))]
-    
-    # ✅ Buscar la última línea que sea un número o expresión (no comando)
-    for i in length(lines):-1:1
-        l = lines[i]
-        # Si contiene :, es un comando (x:4)
-        # Si empieza con (, es un prompt (%o1)
-        if !contains(l, ":") && !startswith(l, "(") && !startswith(l, "incorrect syntax") && 
-           !startswith(l, "batch(") && l != ";" && l != "^"
-           return l
+
+    # Abrir proceso de Maxima en modo interactivo (pero sin salida de inicio)
+    proc = open(`maxima --quiet`, "r+")
+    # Configurar entorno: salida 1D, líneas largas, cargar qinf si existe
+    write(proc.in, "display2d:false\$\n")
+    write(proc.in, "linel:32767\$\n")
+    write(proc.in, "ignore(load(\"qinf\"))\$\n")  # No fallar si no existe
+    write(proc.in, cmd * "\n")
+    close(proc.in)  # Cerrar entrada para que Maxima termine
+    raw = String(read(proc.out))  # Leer toda la salida
+    wait(proc)  # Esperar a que el proceso termine
+
+    # Buscar la línea (%o4) que contiene el resultado del cuarto comando
+    # (los tres primeros son configuración)
+    for line in split(raw, '\n')
+        s = strip(line)
+        m = match(r"^\s*\(%o4\)\s*(.+)", s)
+        if m !== nothing
+            return m.captures[1]
         end
     end
     return ""
 end
 
-"""
-    maxima_eval_float(cmd::String)
-
-Ejecuta un comando de Maxima y devuelve el resultado como Float64 si es numérico.
-Si no es numérico, devuelve el resultado como String.
-
-# Ejemplo
-maxima_eval_float("float(22/7)")      # → 3.142857142857143
-maxima_eval_float("sqrt(2)")          # → "sqrt(2)" (no es numérico sin float())
-maxima_eval_float("float(sqrt(2))")   # → 1.4142135623730951"
-
-"""
-
-function maxima_eval_float(cmd::String)
-    res = maxima_eval(cmd)
-    if res == ""
-        return res
-    end
-
-    try
-    # Intentar convertir a número
-        return parse(Float64, res)
-    catch
-    # Si falla, devolver el string original
-        return res
-    end
+# ------------------------------------------------------------
+# Función auxiliar: is_plot_command
+# Detecta si un comando es gráfico (plot2d, plot3d, etc.)
+# ------------------------------------------------------------
+function is_plot_command(cmd::String)::Bool
+    lower = lowercase(cmd)
+    # Lista de palabras clave que indican un comando gráfico
+    return any(kw -> occursin(kw, lower), ["plot2d", "plot3d", "draw2d", "draw3d", "wxplot"])
 end
 
-"""
-@maxima expr
+# ------------------------------------------------------------
+# Macro principal: @maxima_cell_session
+# Permite ejecutar múltiples comandos en una sola sesión de Maxima,
+# manteniendo el estado entre ellos (variables, funciones, etc.).
+# Soporta gráficos, créditos reales y guardado en fichero.
+# ------------------------------------------------------------
+macro maxima_cell_session(exs...)
+    if length(exs) == 0
+        error("Se requiere al menos un comando Maxima")
+    end
 
-Ejecuta un único comando de Maxima.
-"""
-macro maxima(expr)
-    cmd_str=string(expr)
-    escaped_cmd = replace(cmd_str, "\"" => "\\\"")
-    out=read(`maxima --very-quiet --batch-string="$escaped_cmd;"`, String)
-    #println("DEBUG: Salida = ", repr(out[2:end])) # Depuración
-    out=out[2:end] # Eliminar el primer carácter de nueva línea
-    print("💡 ", out)
-end
+    # Variables para opciones opcionales
+    creditos = false   # ¿Mostrar créditos de Maxima?
+    fichero = nothing  # ¿Guardar salida en un fichero de texto?
+    cmds_list = Any[exs...]  # Lista de argumentos
 
-"""
-@maxima_cell begin ... end
-
-Ejecuta varios comandos, cada uno en su propia instancia.
-"""
-macro maxima_cell(ex)
-    cmds = String[]
-    if ex isa Expr && ex.head === :block
-        for stmt in ex.args
-            s = replace(string(stmt), r"#=.+?=#" => "") |> strip
-            s = replace(s, r";+$" => "") |> strip
-            !isempty(s) && push!(cmds, s)
+    # --------------------------------------------------------
+    # Detectar si el último argumento es creditos=true
+    # --------------------------------------------------------
+    if length(cmds_list) >= 1
+        last_arg = cmds_list[end]
+        if last_arg isa Expr && last_arg.head === :(=) &&
+           length(last_arg.args) == 2 &&
+           last_arg.args[1] == :creditos &&
+           last_arg.args[2] == true
+            creditos = true
+            pop!(cmds_list)  # Eliminar de la lista de comandos
         end
-    else
-        s = replace(string(ex), r"#=.+?=#" => "") |> strip
-        s = replace(s, r";+$" => "") |> strip
-        !isempty(s) && push!(cmds, s)
     end
-    for cmd in cmds
-        escaped = replace(cmd, "\"" => "\\\"")
-        out = read(`maxima --very-quiet --batch-string="$escaped;"`, String)
-        out=(out[2:end]) # Eliminar el primer carácter de nueva línea
-        println("💡 ", out)
-    end
-end
 
-"""
-@maxima_session begin ... end
-
-Ejecuta un bloque en una única sesión (estado persistente).
-"""
-macro maxima_session(ex)
-    cmds = String[]
-    if ex isa Expr && ex.head === :block
-        for stmt in ex.args
-            cmd_str = ""
-            if stmt isa Expr && stmt.head === :(=)
-                try
-                    lhs = string(stmt.args[1])
-                    rhs = string(stmt.args[2])
-                    lhs = replace(lhs, r"\s+" => "")
-                    rhs = replace(rhs, r"\s+" => "")
-                    if !isempty(lhs) && !isempty(rhs)
-                        cmd_str = "$(lhs):$(rhs);"
-                    end
-                catch
+    # --------------------------------------------------------
+    # Detectar si el último argumento es fichero="nombre.txt"
+    # --------------------------------------------------------
+    if length(cmds_list) >= 1
+        last_arg = cmds_list[end]
+        if last_arg isa Expr && last_arg.head === :(=) &&
+           length(last_arg.args) == 2 &&
+           last_arg.args[1] == :fichero
+            val = last_arg.args[2]
+            if val isa String
+                fichero = val
+            elseif val isa Expr && val.head === :string
+                # Extraer cadena de una expresión de cadena
+                str_repr = sprint(show, val)
+                if length(str_repr) >= 2 && str_repr[1] == '"' && str_repr[end] == '"'
+                    fichero = str_repr[2:end-1]
+                else
+                    error("Nombre de fichero no válido")
                 end
             else
-                s = string(stmt)
-                s = replace(s, r"#=.+?=#" => "")
-                s = replace(s, r";+$" => "")
-                s = replace(s, r"\s+" => "")
-                if !isempty(s)
-                    cmd_str = s * ";"
+                error("El argumento 'fichero' debe ser una cadena")
+            end
+            pop!(cmds_list)  # Eliminar de la lista de comandos
+        end
+    end
+
+    # --------------------------------------------------------
+    # Validar y preparar los comandos del usuario
+    # --------------------------------------------------------
+    user_cmds = String[]
+    for ex in cmds_list
+        if ex isa String
+            cmd = ex
+        elseif ex isa Expr && ex.head === :string
+            # Convertir expresión de cadena a cadena real
+            str_repr = sprint(show, ex)
+            if length(str_repr) >= 2 && str_repr[1] == '"' && str_repr[end] == '"'
+                cmd = str_repr[2:end-1]
+            else
+                error("Cadena no válida: $ex")
+            end
+        else
+            error("Solo se permiten cadenas literales entre comillas")
+        end
+
+        # Asegurar que cada comando termine en ; o $
+        stripped = strip(cmd)
+        if !endswith(stripped, ";") && !endswith(stripped, "\$")
+            cmd = cmd * ";"
+        end
+        push!(user_cmds, cmd)
+    end
+
+    # --------------------------------------------------------
+    # ¿Hay algún comando gráfico?
+    # --------------------------------------------------------
+    has_plot = any(cmd -> is_plot_command(cmd), user_cmds)
+
+    # --------------------------------------------------------
+    # Modo con gráficos: procesar todos los comandos en una sola sesión
+    # --------------------------------------------------------
+    if has_plot
+        quote
+            # ----------------------------------------------------
+            # Mostrar aviso si se piden créditos (no compatibles con gráficos)
+            # ----------------------------------------------------
+            if $(creditos)
+                println("ℹ️  El modo 'creditos=true' se ignora cuando hay gráficos.")
+            end
+
+            cmds = $(user_cmds)
+            processed_cmds = String[]  # Comandos adaptados para Maxima
+
+            # ----------------------------------------------------
+            # Preprocesar comandos: convertir plot2d en versión con salida a archivo
+            # ----------------------------------------------------
+            for (i, cmd) in enumerate(cmds)
+                if $(is_plot_command)(cmd)
+                    cmd_clean = strip(replace(cmd, r"[;\$]$" => ""))
+                    tmpfile = joinpath(pwd(), "maxima_plot_temp_$(i).png")
+                    # Añadir opciones de Gnuplot directamente en el comando
+                    if endswith(cmd_clean, ")")
+                        new_cmd = cmd_clean[1:end-1] *
+                                  ", [gnuplot_term, png], " *
+                                  "[gnuplot_out_file, \"$(tmpfile)\"])"
+                    else
+                        new_cmd = cmd_clean
+                    end
+                    push!(processed_cmds, new_cmd * ";")
+                else
+                    push!(processed_cmds, cmd)
                 end
             end
-            if !isempty(cmd_str)
-                push!(cmds, cmd_str)
+
+            # ----------------------------------------------------
+            # Ejecutar todos los comandos en una sola sesión de Maxima
+            # ----------------------------------------------------
+            proc = open(`maxima --quiet`, "r+")
+            write(proc.in, "display2d:false\$\n")
+            write(proc.in, "linel:32767\$\n")
+            write(proc.in, "ignore(load(\"qinf\"))\$\n")
+            write(proc.in, "gnuplot_pipes: true\$\n")  # Necesario para gráficos en batch
+            for cmd in processed_cmds
+                write(proc.in, cmd * "\n")
             end
+            close(proc.in)
+            raw_output = String(read(proc.out))
+            wait(proc)
+
+            # ----------------------------------------------------
+            # Extraer resultados no gráficos (%oN)
+            # ----------------------------------------------------
+            results = Dict{Int, String}()
+            for line in split(raw_output, '\n')
+                s = strip(line)
+                m = match(r"^\s*\(%o(\d+)\)\s*(.*)", s)
+                if m !== nothing
+                    n = parse(Int, m.captures[1])
+                    results[n] = m.captures[2]
+                end
+            end
+
+            # ----------------------------------------------------
+            # Mostrar salida en tiempo real (para mantener orden en Jupyter)
+            # y preparar contenido para fichero
+            # ----------------------------------------------------
+            output_lines = String[]
+
+            for (i, cmd) in enumerate(cmds)
+                cmd_clean = rstrip(strip(cmd), [';', '\$'])
+                terminator = endswith(strip(cmd), "\$") ? "\$" : ";"
+                line_i = "(%i$(i)) $(cmd_clean)$(terminator)"
+                println(line_i)
+                push!(output_lines, line_i)
+
+                if $(is_plot_command)(cmd)
+                    # Mostrar línea de salida para gráfico
+                    line_o = "(%o$(i)) gráfico:"
+                    println(line_o)
+                    println()
+                    push!(output_lines, line_o)
+                    push!(output_lines, "")
+
+                    # ------------------------------------------------
+                    # Mostrar gráfico en Jupyter y guardar copia
+                    # ------------------------------------------------
+                    tmpfile = joinpath(pwd(), "maxima_plot_temp_$(i).png")
+                    permanent_path = ""
+                    if isfile(tmpfile) && filesize(tmpfile) > 0
+                        img_data = read(tmpfile)
+                        display(MIME("image/png"), img_data)  # ← AQUÍ se muestra en su sitio
+                        plot_dir = joinpath(pwd(), "plots")
+                        mkpath(plot_dir)
+                        timestamp = replace(string(now()), r"[:\.\- ]" => "_")
+                        permanent_path = joinpath(plot_dir, "plot_$(timestamp)_$(i).png")
+                        write(permanent_path, img_data)
+                        isfile(tmpfile) && rm(tmpfile, force=true)
+                    end
+
+                    # Añadir ruta al fichero de salida (solo si se pide)
+                    if $(fichero !== nothing) && permanent_path != ""
+                        rel_path = replace(permanent_path, pwd() * "/" => "./")
+                        path_line = "→ Guardado en: $(rel_path)"
+                        push!(output_lines, path_line)
+                    end
+                else
+                    # Mostrar resultado no gráfico
+                    result_key = i + 4  # 4 comandos de inicialización
+                    if haskey(results, result_key)
+                        res_line = "(%o$(i)) $(results[result_key])"
+                        println(res_line)
+                        push!(output_lines, res_line)
+                    end
+                    println()
+                    push!(output_lines, "")
+                end
+            end
+
+            # ----------------------------------------------------
+            # Guardar toda la salida en un fichero de texto (si se pide)
+            # ----------------------------------------------------
+            if $(fichero !== nothing)
+                output_text = join(output_lines, "\n") * "\n"
+                write($(Meta.quot(fichero)), output_text)
+            end
+            nothing
         end
     else
-        return :(nothing)
-    end
+        # --------------------------------------------------------
+        # Modo sin gráficos: similar, pero más simple
+        # --------------------------------------------------------
+        quote
+            cmds = $(user_cmds)
+            output_lines = String[]
 
-    if isempty(cmds)
-        return :(nothing)
-    end
+            # ----------------------------------------------------
+            # Mostrar créditos reales de Maxima si se piden
+            # ----------------------------------------------------
+            if $(creditos)
+                proc_credit = open(`maxima --batch-string="quit();"`, "r")
+                credit_lines = String(read(proc_credit.out))
+                wait(proc_credit)
 
-    full_cmd = join(cmds, " ")
-    escaped_cmd = replace(full_cmd, "\"" => "\\\"")
-    
-    # Depuración
-    #println("DEBUG: Comando = ", repr(full_cmd))
-    
-    output = read(`maxima --very-quiet --batch-string="$escaped_cmd"`, String)
-    #println("DEBUG: Salida = ", repr(output))
-    
-    # Extraer el último resultado numérico o simbólico
-    lines = [strip(l) for l in split(output, '\n') if !isempty(strip(l))]
-    # Tomar la última línea que NO es un comando (no contiene :)
-    for i in length(lines):-1:1
-        if !contains(lines[i], ":") && !startswith(lines[i], "(")
-            println("💡 ",lines[i])
-            return nothing
+                printed = false
+                for line in split(credit_lines, '\n')
+                    s = rstrip(line)
+                    # Detenerse al encontrar la primera línea de entrada (%i1)
+                    if occursin(r"%i\d+", s)
+                        break
+                    end
+                    if !printed && s == ""
+                        continue
+                    end
+                    println(s)
+                    push!(output_lines, s)
+                    printed = true
+                end
+                println()
+                push!(output_lines, "")
+            end
+
+            # ----------------------------------------------------
+            # Ejecutar comandos en una sola sesión
+            # ----------------------------------------------------
+            proc = open(`maxima --quiet`, "r+")
+            write(proc.in, "display2d:false\$\n")
+            write(proc.in, "linel:32767\$\n")
+            write(proc.in, "ignore(load(\"qinf\"))\$\n")
+            for cmd in cmds
+                write(proc.in, cmd * "\n")
+            end
+            close(proc.in)
+            raw_output = String(read(proc.out))
+            wait(proc)
+
+            # Extraer resultados
+            results = Dict{Int, String}()
+            for line in split(raw_output, '\n')
+                s = strip(line)
+                m = match(r"^\s*\(%o(\d+)\)\s*(.*)", s)
+                if m !== nothing
+                    n = parse(Int, m.captures[1])
+                    results[n] = m.captures[2]
+                end
+            end
+
+            # Mostrar salida
+            for (i, cmd) in enumerate(cmds)
+                cmd_clean = rstrip(strip(cmd), [';', '\$'])
+                terminator = endswith(strip(cmd), "\$") ? "\$" : ";"
+                line_i = "(%i$(i)) $(cmd_clean)$(terminator)"
+                println(line_i)
+                push!(output_lines, line_i)
+
+                result_key = i + 3  # 3 comandos de inicialización
+                if haskey(results, result_key)
+                    res_line = "(%o$(i)) $(results[result_key])"
+                    println(res_line)
+                    push!(output_lines, res_line)
+                end
+                println()
+                push!(output_lines, "")
+            end
+
+            # Guardar en fichero si se pide
+            if $(fichero !== nothing)
+                output_text = join(output_lines, "\n") * "\n"
+                write($(Meta.quot(fichero)), output_text)
+            end
+            nothing
         end
     end
-    if !isempty(lines)
-        println(lines[end])
-    end
-    return nothing
 end
 
-end # module MaximaMacro
+end  # module MaximaMacro

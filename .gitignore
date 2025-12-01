@@ -1,11 +1,16 @@
-# Archivos temporales de Julia
-*.jl.*
-!src/*.jl
-!examples/*.jl
+# Salidas de MaximaMacro.jl
+plots/
+*.txt
 
-# Archivos del sistema
+# Archivos gráficos temporales
+*.png
+*.svg
+
+# Julia
+Manifest.toml
+*.jl.*.tmp
+
+# Editor/OS
+*~
 .DS_Store
 Thumbs.db
-
-# Salida de pruebas
-test/

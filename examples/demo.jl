@@ -1,35 +1,49 @@
-include("../src/maximaMacro.jl")
 using .MaximaMacro
 
-@maxima integrate(x^2, x)
+# Resultado simbólico (cadena)
+comando="integrate(x^2, x)"
+expr = maxima_eval(comando)
+println(comando ,"  -->  ", expr,"\n")  # → "x^3/3"
 
-@maxima_cell begin
-    expand((x + 1)^3);
-    diff(sin(x)^2, x);
-    integrate(exp(-x^2), x);
-    H : 1/sqrt(2) * matrix([1, 1], [1, -1]); 
-    I : ident(2);
-end
+# Resultado numérico (cadena)
+num_str = maxima_eval("float(sqrt(2))")
+println(num_str,"\n")  # → "1.414213562373095"
 
-println("=== 1. maxima_eval (resultado simbólico) ===")
-res = maxima_eval("integrate(x^2, x)")
-println("∫ x² dx = ", res)
+# Convertir a número en Julia
+num = parse(Float64, num_str)
+println(num + 1,"\n")  # → 2.414213562373095
 
-println("\n=== 2. maxima_eval_float (resultado numérico) ===")
-num = maxima_eval_float("float(22/7)")
-println("22/7 ≈ ", num)
+# Con qinf (si está instalado)
+ket_result = maxima_eval("ket(0) + ket(1)")
+println(ket_result,"\n")  # → "matrix([1],[1])"  (ejemplo)
 
-println("\n=== 3. maxima_eval con asignación ===")
-val = maxima_eval("x:4; x^2 + 1;")
-println("x² + 1 con x=4 → ", val)
+# Usar el macro @maxima para evaluar expresiones
+@maxima "integrate(x^2, x)"
+@maxima "f(x) := x^3 - 3*x + 2"
 
-println("\n=== 4. maxima_eval_float con expresión no numérica ===")
-sym = maxima_eval_float("sqrt(2)")
-println("sqrt(2) sin float() → ", sym)
+# Evaluar varias expresiones en una sesión
+@maxima_cell_session(
+    "integrate(x^2, x)",
+    "pi:float(%pi)",
+    "pi+1",
+    "a:5",
+    "b:10",
+    "c:a + b"
+)
 
-println("\n=== 5. @maxima_session (sesión con estado) ===")
-@maxima_session begin
-    a = 2
-    b = a^3
-    b
-end
+# Ejemplo con sesión y créditos
+@maxima_cell_session(
+    "a: 5",
+    "b: 7",
+    "c: a + b",
+    creditos=true
+)
+
+# Ejemplo con estado y gráfico
+@maxima_cell_session(
+    "a: 5",
+    "b: 7",
+    "c: a + b",
+    "plot2d(sin(x), [x, 0, %pi])",
+    "plot2d(sin(x), [x, -%pi, %pi])"
+)

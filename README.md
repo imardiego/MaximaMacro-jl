@@ -1,61 +1,37 @@
 # MaximaMacro.jl
-Integración robusta de **Maxima** en **Julia** con soporte para:
 
-- ✅ Comandos únicos (`@maxima`)
-- ✅ Bloques sin estado (`@maxima_cell`)
-- ✅ Sesiones con estado persistente (`@maxima_session`)
-- ✅ Función `maxima_eval()` → devuelve resultados como `String`
-- ✅ Función `maxima_eval_float()` → devuelve resultados como `Float64` (si es numérico)
+Ejecuta comandos de **Maxima** (sistema de álgebra computacional) directamente desde **Julia** con soporte para sesiones persistentes, gráficos integrados en Jupyter y salida limpia al estilo de Maxima.
+Los gráficos generados se guardan en el directorio plots. 
 
-## 🔧 Optimizado para Maxima + GCL
+# Requerimientos
 
-Configura automáticamente las variables de entorno de GCL para:
-- Usar solo el **30% de la RAM física**
-- Activar recolección de basura más temprano
-- Evitar que Maxima bloquee tu sistema
+Instalar maxima: 
+https://maxima.sourceforge.io/download.html?utm_source=chatgpt.com
 
-Basado en recomendaciones oficiales de [Camm Maguire (desarrollador de GCL)](https://lists.gnu.org/archive/html/gcl-devel/2017-09/msg00000.html).
+Instalar qinf: <-- no es obligatorio, solo para algebra cuántica
+https://github.com/jlapeyre/qinf
 
-Ejecuta comandos de **Maxima** directamente desde **Julia**.
+## 🔧 Características
 
-**Importante:** Cada ejecución es independiente con sesión propia.
-Ya sea para un comando o varios comandos juntos con su cabecera @maxima o integrados 
-dentro de una @maxima_cell begin. 
-Esto significa que el si se ejecuta: 
+- ✅ **Sesión persistente**: `a: 5; b: 7; c: a + b;` funciona correctamente.
+- ✅ **Gráficos en Jupyter**: los gráficos aparecen **en su posición correcta** dentro de la secuencia de comandos.
+- ✅ **Salida limpia**: formato `(%i1) comando;` → `(%o1) resultado`.
+- ✅ **Opción de créditos reales** de Maxima (encabezado oficial).
+- ✅ **Guardado opcional** de toda la salida en un fichero de texto.
+- ✅ **Compatibilidad con `qinf`**: paquete de aritmética cualitativa (infinitos, etc.).
 
-          @maxima a:7
-          @maxima b:8
-          @maxima c:a+b 
+## 📥 Instalación
 
-Los resultados de las  ejecuiones serán 7, 8 y c:a+b, ya que una segunda ejecución no 
-guarda el valor de la primera. 
+Requisitos: 
+   
+    - Maxima
+    - Gnuplot
 
-## Requisitos
-- Julia ≥ 1.6
-- Maxima instalado (`maxima` en el PATH)
-- (Opcional) [`qinf`](https://github.com/hpcalc/qinf) para información cuántica
+Descarga MaximaMacro.jl e inclúyelo en tu directorio local:
 
-## Uso
+    - Desde Julia Jupiter Notebook: include ("MaximaMacro.jl")
 
-include("src/maximaMacro.jl")
-using .MaximaMacro
-
-@maxima diff(x^2 + sin(x), x)
-
-@maxima_cell begin
-    expand((x + 1)^3)
-    integrate(exp(-x^2), x)
-end
-
-📌 Ejemplos
-# Resultado simbólico
-maxima_eval("diff(x^3, x)")  # → "3*x^2"
-
-# Resultado numérico
-maxima_eval_float("float(sqrt(2))")  # → 1.4142135623730951
-
-# Sesión con estado
-@maxima_session begin
-    x = 5
-    x^2  # → 25
-end
+O instalalo desde Julia: 
+  
+    - using Pkg
+    - add path de MaximaMacro en github
