@@ -31,6 +31,7 @@ Descarga MaximaMacro.jl e inclúyelo en tu directorio local:
     - Desde Julia Jupiter Notebook: include ("MaximaMacro.jl")
 
 O instalalo desde Julia: 
-  
-    - using Pkg
-    - add path de MaximaMacro en github
+
+    $julia
+    - ] <-- entrando en modo paquete
+    - add https://github.com/imardiego/MaximaMacro-jl.git
